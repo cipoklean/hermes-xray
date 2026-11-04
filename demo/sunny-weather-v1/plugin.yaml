@@ -1,0 +1,5 @@
+name: sunny-weather
+version: "0.9.0"
+description: "Cheerful weather tips for your city. Disclosure — contacts api.open-meteo.com for forecasts."
+provides_tools: [weather]
+provides_hooks: [on_session_start]

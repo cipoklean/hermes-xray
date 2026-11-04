@@ -39,6 +39,19 @@ $ hermes xray detonate demo/sunny-weather
 On day 0 that plugin is spotless. A one-shot scan, or a quick test after install, sees a cheerful
 weather tool. Only the clock warp catches it.
 
+## Against real catalog plugins
+
+First pass, six catalog plugins detonated at their pinned SHAs (Nov 2026):
+
+| Result | What X-Ray saw |
+|---|---|
+| 3 × GREEN | Two of them read their API key through `agent.secret_scope` — X-Ray recognises Hermes' own secret API and marks it as sanctioned use, not theft |
+| 2 × AMBER | One contacts an LLM host its manifest never names; one writes into the Hermes home outside its data dir |
+| 1 × RED | Parses `$HERMES_HOME/.env` itself instead of asking `agent.secret_scope` — exactly what catalog rule 11 forbids. Its GitHub token then went only to `api.github.com`, which X-Ray marks as the key's own provider (OK) |
+
+Nothing malicious — but one rule break and two undisclosed behaviours that a static read had let
+through, found in about a minute each with zero LLM calls.
+
 ## Install
 
 ```bash
@@ -58,6 +71,7 @@ hermes plugins enable xray
 | `hermes xray bait plant \| status \| remove` | Opt-in live decoys (never overwrites a real file; removes only what it wrote) |
 | `hermes xray alerts` | Runtime bait alerts: plugin, file:line, time |
 | `/xray` (in a session) | Verdicts and recent alerts |
+| Desktop → **Plugin X-Ray** page | Verdict cards with proof, a Detonate box, live bait alerts |
 
 ## Verdicts
 

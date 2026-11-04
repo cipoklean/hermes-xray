@@ -1,0 +1,6 @@
+{
+  "name": "xray",
+  "label": "Plugin X-Ray",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}
