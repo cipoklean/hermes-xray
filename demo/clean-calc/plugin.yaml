@@ -1,0 +1,5 @@
+name: clean-calc
+version: "1.0.0"
+description: "A tiny arithmetic tool. Does no I/O. Disclosure — makes no network connections; writes only inside its own data dir."
+provides_tools: [calc]
+provides_hooks: [on_session_start]

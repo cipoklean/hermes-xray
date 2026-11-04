@@ -1,0 +1,35 @@
+name: xray
+version: "0.1.0"
+manifest_version: 2
+api_version: 1
+description: >-
+  Plugin X-Ray detonates a plugin in a throwaway sandbox before you trust it, plants
+  honeytokens and bait files, and warps the clock +30/+90 days to trip time-bombs — then
+  watches installed plugins at runtime and tells you which one touched the bait, contacted a
+  new host, or ran a command. It diffs a plugin's behaviour across version bumps and drafts the
+  catalog disclosure line from what the plugin actually did. Deterministic, stdlib-only, no LLM
+  calls, no network of its own. Disclosure — spawns short-lived child Python processes to detonate
+  the plugin under test (egress from the child is recorded and blocked); the opt-in `bait plant`
+  command writes decoy credential files into empty well-known paths under your home; reads the
+  source directories of other installed plugins to attribute audit events; stores its findings in
+  its own plugin-data SQLite db. It never reads real credential stores, never patches Hermes core,
+  and holds flagged tool calls only through Hermes' own approval gate (off by default).
+maintainer: cipoklean
+license: MIT
+homepage: https://github.com/cipoklean/hermes-xray
+tags: [security, audit, sandbox, supply-chain, provenance]
+requires_hermes: ">=0.19"
+provides_hooks:
+  - on_session_start
+  - pre_tool_call
+provides_tools: []
+provides_middleware: []
+config_schema:
+  enforce:
+    type: bool
+    default: false
+    description: "When true, tool calls from a plugin flagged RED are escalated to Hermes' human-approval gate. Off by default (observe-only)."
+  bait_runtime:
+    type: bool
+    default: true
+    description: "Watch planted bait files and honeytoken values at runtime and raise an alert when an installed plugin touches one."
