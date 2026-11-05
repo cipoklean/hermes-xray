@@ -53,7 +53,14 @@ def _git_sha(d: Path) -> str:
             dirty = subprocess.run(["git", "-C", str(d), "status", "--porcelain", "--", "."],
                                    capture_output=True, text=True, timeout=10).stdout.strip()
             if top and not dirty:
-                return out.stdout.strip()
+                if Path(top).resolve() == d.resolve():
+                    return out.stdout.strip()
+                # a plugin in a repo subdir: two subdirs at one commit are different code, so key
+                # them by the subdir's own git tree id (what `catalog subdir:` installs)
+                tree = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD:./"],
+                                      capture_output=True, text=True, timeout=10).stdout.strip()
+                if re.fullmatch(r"[0-9a-f]{40}", tree):
+                    return tree
     except (OSError, subprocess.SubprocessError):
         pass
     return _tree_sha(d)
