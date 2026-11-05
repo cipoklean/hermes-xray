@@ -140,15 +140,17 @@ class LiveBaitTests(unittest.TestCase):
             import importlib.util
             spec = importlib.util.spec_from_file_location("hermes_plugins.nosy", plugins / "__init__.py")
             m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-            open(decoy).read()          # Hermes itself: must NOT alert
-            m.peek(str(decoy))           # the plugin: must alert
+            open(decoy).read()          # Hermes itself: logged as INFO, never blamed on a plugin
+            m.peek(str(decoy))           # the plugin: RED, blamed on it
             print(json.dumps(alerts))
         """ % str(ROOT))
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
         alerts = json.loads(out.stdout.strip().splitlines()[-1])
-        self.assertEqual(len(alerts), 1, out.stderr)
-        self.assertEqual(alerts[0]["plugin"], "nosy")
-        self.assertEqual(alerts[0]["kind"], "bait-file-read")
+        red = [a for a in alerts if a["severity"] == "RED"]
+        self.assertEqual(len(red), 1, out.stderr)
+        self.assertEqual(red[0]["plugin"], "nosy")
+        self.assertEqual(red[0]["kind"], "bait-file-read")
+        self.assertTrue(all(a["plugin"] == "(unattributed)" for a in alerts if a["severity"] != "RED"))
 
 
 if __name__ == "__main__":
