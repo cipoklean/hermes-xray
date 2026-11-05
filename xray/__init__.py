@@ -88,6 +88,26 @@ def _flagged_plugins() -> set:
     return flagged
 
 
+def _why(owner: str, tool_name: str) -> str:
+    """One line a person can decide on: what this plugin was caught doing, and where."""
+    reason = "RED"
+    try:
+        hits = [a for a in store.alerts(limit=50, plugin=owner) if a.get("severity") == "RED"]
+        if hits:
+            kinds = sorted({a["detail"].split("(")[-1].rstrip(")") for a in hits if "(" in a["detail"]})
+            loc = os.path.basename(str(hits[0].get("location") or ""))
+            reason = f"caught reading planted bait ({', '.join(kinds) or hits[0]['detail']})"
+            if loc:
+                reason += f" at {loc}"
+        else:
+            d = store.latest_verdicts().get(owner) or {}
+            if d.get("verdict") == "RED":
+                reason = "RED in the detonation chamber (see: hermes xray show " + owner + ")"
+    except Exception:
+        pass
+    return f"Plugin X-Ray: '{owner}' was {reason}. Approve this '{tool_name}' call?"
+
+
 def _pre_tool_call(tool_name=None, args=None, task_id=None, **kwargs):
     """When enforce is on, a tool owned by a RED plugin is escalated to human approval.
 
@@ -116,9 +136,7 @@ def _pre_tool_call(tool_name=None, args=None, task_id=None, **kwargs):
                 owner = name
                 break
     if owner:
-        return {"action": "approve",
-                "message": f"Plugin X-Ray flagged '{owner}' RED (detonation or live bait). Approve this "
-                           f"'{tool_name}' call?"}
+        return {"action": "approve", "message": _why(owner, tool_name)}
     return None
 
 
