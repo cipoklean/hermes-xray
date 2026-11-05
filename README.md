@@ -11,7 +11,7 @@ Plugin X-Ray checks. It works in four ways.
 
 | | What it does | Command |
 |---|---|---|
-| 🧪 **Detonate** | Runs a plugin in a throwaway sandbox before you trust it. The sandbox has a fake home full of fake keys (*honeytokens*). X-Ray calls every tool with generated inputs and fires every hook, with the network blocked. Then it repeats the run with the clock moved forward 30 and 90 days to catch plugins that wait before misbehaving. The verdict is RED, AMBER or GREEN, with the file and line as proof. | `hermes xray detonate <plugin>` |
+| 🧪 **Detonate** | Runs a plugin in a throwaway child process before you trust it. The child gets a fake home full of fake keys (*honeytokens*) and runs as you, so this is a tripwire, not an OS sandbox. X-Ray calls every tool with generated inputs and fires every hook, with network, spawns and reads of your real secrets blocked at the Python level. Then it repeats the run with the clock moved forward 30 and 90 days to catch plugins that wait before misbehaving. The verdict is RED, AMBER or GREEN, with the file and line as proof. | `hermes xray detonate <plugin>` |
 | 🪤 **Live bait** | Opt-in. Puts fake credential files (an AWS key, a wallet seed, an `.env` backup…) into empty, well-known paths on your machine. Nothing you own uses them, so an honest plugin has no reason to open one. If an installed plugin does, X-Ray names the plugin and the line of code. With `enforce` on, Hermes then asks your approval before that plugin's next tool call. | `hermes xray bait plant` |
 | 🔍 **Diff** | Every detonation is saved for that exact version. When a plugin updates, X-Ray shows what changed in its *behaviour*, such as `+ host sunny-weather-cdn.ru`. | `hermes xray diff <plugin>` |
 | 📝 **Disclose** | Drafts the honest catalog disclosure line from what the plugin really did. | `hermes xray disclose <plugin>` |
@@ -26,7 +26,7 @@ your keys.
 
 ```
 $ hermes xray detonate demo/sunny-weather
-⚗️  Detonating sunny-weather in a sealed chamber (bait planted, egress blocked, clock now, +30d, +90d)…
+⚗️  Detonating sunny-weather in a throwaway chamber (fake home with bait, egress and spawns blocked, clock now, +30d, +90d)…
   VERDICT: ⛔ RED
   Why it's flagged:
     • read bait credential files: aws_credentials, hermes_env (at sunny-weather/__init__.py:11)
@@ -137,12 +137,13 @@ plugins:
 ## How it works
 
 ```
- your Hermes                                   sealed child process (thrown away after)
+ your Hermes                                   child process, runs as you (thrown away after)
  ───────────                                   ─────────────────────────────────────────
  make a fake HOME with unique fake keys  ───▶  a Python audit hook records every file open,
  strip your real keys from the env              connection, DNS lookup, command and native
  for each clock (now, +30d, +90d):              call, and blames the plugin's own file:line
-   start the child  ───────────────────────▶   network and commands are blocked
+   start the child  ───────────────────────▶   network, commands and fork are blocked;
+                                               reads of your real secrets are refused
                                                the plugin loads, the clock jumps ahead,
                                                every tool is called, every hook fired
  read the events  ◀────────────────────────    events.jsonl
@@ -157,15 +158,25 @@ never approves anything by itself.
 
 ## Disclosure (catalog rule 13)
 
-- Starts short-lived child Python processes to detonate the plugin being tested. Each child gets a
-  fake `HOME`/`HERMES_HOME` and fake keys only; your real keys are removed from its environment.
-  Its network traffic and process starts are recorded and blocked.
-- The plugin under test really runs, sandboxed by environment rather than by a virtual machine.
-  Detonate unknown code on a machine you don't mind.
+- Starts short-lived child Python processes to detonate the plugin being tested. **The child runs
+  as you, with your file permissions.** It gets a fake `HOME`/`HERMES_HOME` and fake keys, and your
+  real keys are removed from its environment, but it is not an OS sandbox: code that knows an
+  absolute path can still reach your real files.
+- Inside the child, Python audit hooks record and block network egress and process starts
+  (`subprocess`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.fork`/`forkpty`, a direct
+  `_posixsubprocess.fork_exec`, Windows `CreateProcess`). A read of a real credential store
+  outside the chamber (your real Hermes `.env`/`auth.json`/memories, `~/.ssh`, `~/.aws`,
+  `~/.git-credentials`, wallets…) is refused and makes the verdict RED. Any other read of your real
+  home by the plugin's code is AMBER. This blocking is a tripwire, not a wall: native code
+  (ctypes/cffi, compiled extensions) runs below the hooks and can bypass it, which is why X-Ray
+  marks native code AMBER. Detonate unknown code on a machine you don't mind.
 - `bait plant` is opt-in. It writes decoys only into empty paths under your home
   (`~/.aws/credentials`, `~/.ssh/id_ed25519`, `~/.git-credentials`, `~/.config/solana/id.json`,
   `~/Documents/wallet-backup.txt`, `~/.env.backup`), never into your Hermes home, and never over an
-  existing file. `bait remove` deletes only unchanged files it created.
+  existing file. **These are the default credential paths of the AWS CLI/SDKs, git's credential
+  store, ssh and the Solana CLI, so those tools will pick up the fake values until you run
+  `bait remove`.** Plant bait only on a machine where you don't use those tools' default files, or
+  remove it before you do. `bait remove` deletes only unchanged files it created.
 - Reads other installed plugins' source folders to work out which one caused an event.
 - Never reads your real credentials, never calls an LLM, and never goes online itself, except for
   `git clone` when you detonate a remote repo.
@@ -179,13 +190,17 @@ never approves anything by itself.
 - **Environment variables.** Reading one isn't an event Python reports. Stealing a key from the
   environment is caught when the value *leaves* (in a URL, a DNS name, a command or a file), not
   when it's read.
-- **Not a virtual machine.** See Disclosure above.
+- **Not an OS sandbox.** The child runs as you. Spawn and egress blocking is done by Python audit
+  hooks, so it's a tripwire that native code can bypass. Running the child under bubblewrap or
+  `sandbox-exec` is on the roadmap. See Disclosure above.
+- **Code files.** Reads of `.py`/`.pyc`/`.so` files, the interpreter and Hermes' own source tree
+  aren't flagged, because that's how Python imports code.
 - Desktop `plugin.js` code isn't detonated, only the Python side.
 
 ## Tests
 
 ```bash
-python -m unittest discover -s tests     # 12 tests, no Hermes needed
+python -m unittest discover -s tests     # 13 tests, no Hermes needed
 ```
 
 The demo samples are in [`demo/`](demo/) and are **not** part of the installed plugin.

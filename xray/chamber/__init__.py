@@ -23,6 +23,27 @@ DEFAULT_WARPS = (0, 30, 90)
 _PASS_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP")
 
 
+def real_roots() -> dict:
+    """The user's real home and Hermes home, so the child can refuse reads of them."""
+    home = os.path.expanduser("~")
+    hh = os.environ.get("HERMES_HOME")
+    if not hh:
+        if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+            hh = os.path.join(os.environ["LOCALAPPDATA"], "hermes")
+        else:
+            hh = os.path.join(home, ".hermes")
+    code = {sys.prefix, sys.base_prefix, sys.exec_prefix}
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("hermes_cli")
+        if spec and spec.origin:
+            code.add(os.path.dirname(os.path.dirname(spec.origin)))  # Hermes' own source tree
+    except (ImportError, ValueError):
+        pass
+    return {"real_home": os.path.realpath(home), "real_hermes_home": os.path.realpath(hh),
+            "code_roots": sorted(os.path.realpath(c) for c in code if c)}
+
+
 def _child_env(world: dict, events: Path, warp: int, allow_exec: bool) -> dict:
     env = {k: os.environ[k] for k in _PASS_ENV if k in os.environ}
     env.update(world["env"])  # bait credentials, not real ones
@@ -32,6 +53,9 @@ def _child_env(world: dict, events: Path, warp: int, allow_exec: bool) -> dict:
         "XRAY_EVENTS": str(events), "XRAY_WARP_DAYS": str(warp),
         "XRAY_NEEDLES": "\x1f".join(bait.needles(world)), "XRAY_TARGET_MODULE": "xray_target",
         "XRAY_ALLOW_EXEC": "1" if allow_exec else "0",
+        "XRAY_CHAMBER_ROOT": world["root"], "XRAY_REAL_HOME": world["real_home"],
+        "XRAY_REAL_HERMES_HOME": world["real_hermes_home"],
+        "XRAY_CODE_ROOTS": os.pathsep.join(world["code_roots"]),
         "NO_PROXY": "*", "no_proxy": "*",
     })
     return env
@@ -91,6 +115,7 @@ def detonate(plugin_dir: Path, *, warps=DEFAULT_WARPS, allow_exec: bool = False,
     plugin_dir = Path(plugin_dir).resolve()
     root = Path(tempfile.mkdtemp(prefix="xray-chamber-"))
     world = bait.build_world(root)
+    world.update(real_roots(), root=os.path.realpath(str(root)))
     staged = stage_copy(plugin_dir, world)
     runs = []
     try:
@@ -124,6 +149,7 @@ def detonate(plugin_dir: Path, *, warps=DEFAULT_WARPS, allow_exec: bool = False,
             shutil.rmtree(root, ignore_errors=True)
     return {"plugin_dir": str(plugin_dir), "staged_dir": str(staged),
             "binaries": native_binaries(plugin_dir), "world": {
-        k: world[k] for k in ("home", "hermes_home", "marker", "files")} | {
+        k: world[k] for k in ("home", "hermes_home", "marker", "files", "root", "real_home",
+                             "real_hermes_home")} | {
         "token_kinds": {v: k for k, v in world["tokens"].items()}},
         "needles": bait.needles(world), "runs": runs, "chamber_root": str(root)}

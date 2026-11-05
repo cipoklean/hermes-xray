@@ -3,16 +3,20 @@ version: "0.1.0"
 manifest_version: 2
 api_version: 1
 description: >-
-  Plugin X-Ray detonates a plugin in a throwaway sandbox before you trust it, plants
+  Plugin X-Ray detonates a plugin in a throwaway child process before you trust it, plants
   honeytokens and bait files, and warps the clock +30/+90 days to trip time-bombs — then
   watches installed plugins at runtime and tells you which one touched the bait, down to the
   file and line. It diffs a plugin's behaviour across version bumps and drafts the
   catalog disclosure line from what the plugin actually did. Deterministic, stdlib-only, no LLM
   calls, no network of its own. Disclosure — spawns short-lived child Python processes to detonate
-  the plugin under test (egress from the child is recorded and blocked); the opt-in `bait plant`
-  command writes decoy credential files into empty well-known paths under your home; reads the
+  the plugin under test; the child runs as you with a fake HOME and fake keys, not in an OS
+  sandbox, so its egress and spawn blocking (Python audit hooks) is a tripwire that native code
+  can bypass, and reads of your real credential stores are refused; the opt-in `bait plant`
+  command writes decoy credential files into empty default paths of the AWS CLI/SDKs, git's
+  credential store, ssh and the Solana CLI, so those tools use the fake values until
+  `bait remove`; reads the
   source directories of other installed plugins to attribute audit events; stores its findings in
-  its own plugin-data SQLite db. It never reads real credential stores, never patches Hermes core,
+  its own plugin-data SQLite db. X-Ray itself never reads real credential stores, never patches Hermes core,
   and holds flagged tool calls only through Hermes' own approval gate (off by default).
 license: MIT
 homepage: https://github.com/cipoklean/hermes-xray

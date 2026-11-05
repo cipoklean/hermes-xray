@@ -105,6 +105,7 @@ def summarize_run(run: dict, world: dict) -> dict:
     native = []
     sanctioned = []
     egress_blocked = set()
+    real_creds, real_reads = [], []
     for e in run.get("events", []):
         kind, target = e.get("kind"), e.get("target", "")
         where = _short_where(e.get("where", ""), world)
@@ -129,6 +130,21 @@ def summarize_run(run: dict, world: dict) -> dict:
                 baited.append(entry)
                 reads.add("credential-store")  # every planted decoy is a credential file
             continue
+        out = e.get("outside", "")
+        if out and kind in ("open", "listdir") and not e.get("blocked"):
+            p = target.replace("\\", "/")
+            if out == "real-credential":
+                entry = {"kind": "real-read", "target": p[:160], "where": where,
+                         "phase": e.get("phase"), "via": via}
+                if not any(x["target"] == entry["target"] for x in real_creds):
+                    real_creds.append(entry)
+                reads.add("real-credential")
+                continue
+            if via == "plugin" and not p.startswith(("/proc/", "/sys/", "/dev/")):
+                if p not in [x["target"] for x in real_reads]:
+                    real_reads.append({"target": p[:160], "where": where})
+                reads.add("real-files")
+                continue
         by_hermes = via.startswith("hermes:")
         if by_hermes and kind in ("open", "write", "delete", "listdir", "subprocess"):
             continue  # Hermes' own code doing its job (config, credential pool, platform probes)
@@ -156,7 +172,7 @@ def summarize_run(run: dict, world: dict) -> dict:
     return {"warp_days": run.get("warp_days"), "hosts": sorted(hosts),
             "egress_blocked": sorted(egress_blocked), "commands": sorted(cmds),
             "writes": sorted(writes), "reads": sorted(reads), "bait_hits": baited,
-            "sanctioned": sanctioned,
+            "sanctioned": sanctioned, "real_creds": real_creds, "real_reads": real_reads,
             "dynamic_code": dyn, "native": native,
             "crash": run.get("crash"), "timed_out": run.get("timed_out")}
 
@@ -200,7 +216,14 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
     all_bait, warp_only, sanctioned = [], [], []
     dyn = False
     native = []
+    real_creds, real_reads = [], []
     for s in per:
+        for x in s.get("real_creds", []):
+            if x["target"] not in [y["target"] for y in real_creds]:
+                real_creds.append(x)
+        for x in s.get("real_reads", []):
+            if x["target"] not in [y["target"] for y in real_reads]:
+                real_reads.append(x)
         native += [n for n in s.get("native", []) if n not in native]
         union_hosts |= set(s["hosts"]) | set(s["egress_blocked"])
         union_cmds |= set(s["commands"])
@@ -244,6 +267,10 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
         dests = sorted({(_host_of(b["kind"], b["target"]) or b["target"][:40]) for b in exfil})
         reasons.append("honeytoken values sent out toward: " + ", ".join(dests[:4])
                        + f" (at {exfil[0]['where']})")
+    if real_creds:
+        reasons.append("tried to read your REAL credential files outside the chamber (refused): "
+                       + ", ".join(x["target"] for x in real_creds[:3])
+                       + f" (at {real_creds[0]['where']})")
     if warp_only:
         reasons.append("new behaviour only after clock warp (possible time-bomb): "
                        + "; ".join(f"+{w['warp_days']}d {w['new_hosts']+w['new_commands']}" for w in warp_only))
@@ -258,6 +285,10 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
         amber.append("runs command(s): " + ", ".join(sorted(union_cmds)))
     if union_writes & {"hermes-home", "home", "system", "other"}:
         amber.append("writes outside its data dir: " + ", ".join(sorted(union_writes & {"hermes-home","home","system","other"})))
+    if real_reads:
+        amber.append("reads your real files outside the chamber: "
+                     + ", ".join(x["target"] for x in real_reads[:3])
+                     + f" (at {real_reads[0]['where']})")
     if dyn:
         amber.append("executes dynamically built code")
     binaries = list(detonation.get("binaries") or [])
@@ -278,8 +309,9 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
             "dynamic_code": dyn, "bait_hits": all_bait, "warp_only": warp_only,
             "undisclosed_hosts": undisclosed, "sanctioned": sanctioned, "fingerprint": fp,
             "native": native, "binaries": binaries,
+            "real_creds": real_creds, "real_reads": real_reads,
             "disclosure": disclosure(sorted(union_hosts), sorted(union_cmds), sorted(union_writes),
-                                     dyn, "credential-store" in union_reads,
+                                     dyn, bool({"credential-store", "real-credential"} & union_reads),
                                      native=bool(native or binaries))}
 
 

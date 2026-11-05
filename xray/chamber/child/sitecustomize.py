@@ -25,11 +25,55 @@ _WATCH = {
     "socket.connect": "connect", "socket.getaddrinfo": "dns", "socket.gethostbyname": "dns",
     "urllib.Request": "http", "http.client.connect": "connect", "subprocess.Popen": "subprocess",
     "os.system": "subprocess", "os.exec": "subprocess", "os.posix_spawn": "subprocess",
+    "os.fork": "subprocess", "os.forkpty": "subprocess", "_winapi.CreateProcess": "subprocess",
+    "os.startfile": "subprocess", "xray.fork_exec": "subprocess",
     "ctypes.dlopen": "native", "shutil.rmtree": "delete", "exec": "dynamic_code",
     "import": "import",
 }
 _IMPORTS_OF_INTEREST = {"socket", "ctypes", "cffi", "_cffi_backend", "subprocess", "requests", "httpx",
-                        "urllib.request", "http.client", "smtplib", "ftplib", "paramiko"}
+                        "urllib.request", "http.client", "smtplib", "ftplib", "paramiko",
+                        "_posixsubprocess", "_winapi", "pty"}
+
+_CHAMBER = os.environ.get("XRAY_CHAMBER_ROOT", "")
+_REAL_ROOTS = [r for r in (os.environ.get("XRAY_REAL_HERMES_HOME", ""),
+                           os.environ.get("XRAY_REAL_HOME", "")) if r]
+# interpreter and Hermes code trees: reading them is how Python runs, not snooping
+_CODE_ROOTS = [c for c in os.environ.get("XRAY_CODE_ROOTS", "").split(os.pathsep) if c]
+# credential stores in the user's real home; any read of one from the chamber is refused
+_CRED_PARTS = ("/.ssh/", "/.aws/", "/.git-credentials", "/.netrc", "/solana/", "wallet",
+               "credentials", "/.env", "auth.json", "/memories/", "/.config/gh/", "/.docker/config",
+               "/.kube/config", "/.gnupg/", "/.npmrc", "/.pypirc")
+
+
+def _n(path):
+    try:
+        return os.path.normcase(os.path.realpath(path)).replace("\\", "/")
+    except Exception:
+        return str(path).replace("\\", "/")
+
+
+def _under(p, root):
+    r = _n(root).rstrip("/")
+    return bool(r) and (p == r or p.startswith(r + "/"))
+
+
+def _outside_class(path):
+    """'' inside the chamber; 'real-credential' for a credential store under the real home;
+    'real-home' for other files under the real home; 'outside' for anything else."""
+    if not path or not isinstance(path, (str, bytes)) or not _CHAMBER:
+        return ""
+    if isinstance(path, bytes):
+        path = path.decode("utf-8", "replace")
+    p = _n(path)
+    if _under(p, _CHAMBER) or any(_under(p, c) for c in _CODE_ROOTS):
+        return ""
+    for root in _REAL_ROOTS:
+        if _under(p, root):
+            low = p.lower() + ("/" if os.path.isdir(p) else "")
+            if any(c in low for c in _CRED_PARTS):
+                return "real-credential"
+            return "real-home"
+    return "outside"
 
 
 import threading as _threading
@@ -224,6 +268,9 @@ def _hook(event, args):
         if fname and not fname.startswith("<"):
             return  # executing a real file (module import), not built-at-runtime code
         target = fname or "<code>"
+    outside = _outside_class(target) if kind in ("open", "listdir", "write", "delete") else ""
+    if event in ("os.fork", "os.forkpty"):
+        target = event[3:] + "()"
     rec = {"event": event, "kind": kind, "target": target[:300], "t": _time.time(),
            "origin": origin, "where": where, "phase": getattr(_TLS, "phase", None) or _PHASE[0]}
     if kind == "open" and len(args) > 1:
@@ -232,7 +279,15 @@ def _hook(event, args):
         rec["via"] = _via()
     if hits:
         rec["bait"] = hits
+    if outside:
+        rec["outside"] = outside
     _emit(rec)
+
+    # the chamber's HOME is fake, but the child still runs as the user; refuse the real secrets
+    if outside == "real-credential":
+        rec2 = dict(rec); rec2["blocked"] = True
+        _emit(rec2)
+        raise _BlockEgress(f"xray chamber refused a read of your real credential file {target!r}")
 
     # block real egress so nothing actually leaves the chamber; loopback is allowed for demos
     if kind in ("connect", "dns", "http") and not _loopback(target):
@@ -246,6 +301,36 @@ def _hook(event, args):
 
 
 sys.addaudithook(_hook)
+
+
+# _posixsubprocess.fork_exec raises no audit event of its own, so a plugin calling it directly
+# would skip the spawn block. Wrap it before anything binds it: subprocess' own calls (already
+# audited as subprocess.Popen) pass through; any other caller is audited as a spawn.
+try:
+    import _posixsubprocess as _ps
+
+    _real_fork_exec = _ps.fork_exec
+    _SUBPROCESS_FILE = os.path.join(os.path.dirname(os.__file__), "subprocess.py")
+
+    def _xray_fork_exec(*a, **k):
+        try:
+            caller = sys._getframe(1).f_code.co_filename
+        except ValueError:
+            caller = ""
+        if os.path.normcase(caller) != os.path.normcase(_SUBPROCESS_FILE):
+            argv = a[0] if a else None
+            if isinstance(argv, (list, tuple)) and argv:
+                argv = argv[0]
+            if isinstance(argv, bytes):
+                argv = argv.decode("utf-8", "replace")
+            sys.audit("xray.fork_exec", str(argv), None)
+        return _real_fork_exec(*a, **k)
+
+    _ps.fork_exec = _xray_fork_exec
+    if "subprocess" in sys.modules and hasattr(sys.modules["subprocess"], "_fork_exec"):
+        sys.modules["subprocess"]._fork_exec = _xray_fork_exec
+except ImportError:  # Windows has no _posixsubprocess
+    pass
 
 
 # ── clock warp (child only) ──────────────────────────────────────────────────

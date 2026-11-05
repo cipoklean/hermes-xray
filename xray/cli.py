@@ -126,8 +126,8 @@ def cmd_detonate(a) -> int:
         return 0
     warps = tuple(int(x) for x in a.warps.split(",") if x.strip() != "")
     if not a.json:
-        print(f"⚗️  Detonating {name} @ {sha[:12]} in a sealed chamber "
-              f"(bait planted, egress blocked, clock {', '.join(('+%dd' % w) if w else 'now' for w in warps)})…")
+        print(f"⚗️  Detonating {name} @ {sha[:12]} in a throwaway chamber "
+              f"(fake home with bait, egress and spawns blocked, clock {', '.join(('+%dd' % w) if w else 'now' for w in warps)})…")
     try:
         det = chamber.detonate(d, warps=warps, allow_exec=a.allow_exec, fuzz_rounds=a.rounds,
                                per_call_timeout=a.timeout, keep=a.keep)
