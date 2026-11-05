@@ -126,7 +126,7 @@ def summarize_run(run: dict, world: dict) -> dict:
             if h:
                 (egress_blocked if e.get("blocked") else hosts).add(h)
         elif kind == "subprocess":
-            cmds.add(os.path.basename(target.split()[0]) if target else "?")
+            cmds.add(_cmd_name(target))
         elif kind == "open":
             pc = _path_class(target, home, hhome)
             mode = e.get("mode", "")
@@ -159,6 +159,21 @@ def declared_hosts(texts: List[str]) -> List[str]:
 
 def _disclosed(host: str, declared: List[str]) -> bool:
     return any(host == d or host.endswith("." + d) or d.endswith("." + host) for d in declared)
+
+
+def _cmd_name(target: str) -> str:
+    """Program name from a spawn target on any OS: 'C:\\Windows\\curl.exe' -> 'curl'."""
+    t = (target or "").strip()
+    if t.startswith('"'):
+        first = t[1:].split('"', 1)[0]
+    elif re.match(r"^[A-Za-z]:[\\/]", t) and (".exe" in t.lower()):
+        first = t[: t.lower().index(".exe") + 4]
+    else:
+        first = t.split()[0] if t else ""
+    if not first or first == "None":
+        return "?"
+    name = re.split(r"[\\/]", first)[-1]
+    return re.sub(r"\.(exe|cmd|bat|com)$", "", name, flags=re.I) or "?"
 
 
 def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:

@@ -8,6 +8,7 @@ only writes into well-known paths that do not exist yet.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -146,9 +147,14 @@ def plant(home: Path, registry_file: Path) -> List[dict]:
         if p.exists() or p.is_symlink():
             continue
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(item["content"], encoding="utf-8")
-        os.chmod(p, 0o600)
-        planted.append({"kind": item["kind"], "path": str(p), "size": len(item["content"].encode())})
+        data = item["content"].encode("utf-8")
+        p.write_bytes(data)  # bytes, so Windows newline translation can't change the size
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
+        planted.append({"kind": item["kind"], "path": str(p), "size": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest()})
     state = {"marker": mk, "tokens": tokens, "files": planted}
     registry_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
     os.chmod(registry_file, 0o600)
@@ -161,7 +167,7 @@ def remove(registry_file: Path) -> List[str]:
     for f in state.get("files", []):
         p = Path(f["path"])
         try:
-            if p.is_file() and p.stat().st_size == f.get("size", -1):
+            if p.is_file() and _unchanged(p, f):
                 p.unlink()
                 removed.append(str(p))
         except OSError:
@@ -170,6 +176,14 @@ def remove(registry_file: Path) -> List[str]:
         registry_file.unlink()
     return removed
 
+
+def _unchanged(p: Path, f: dict) -> bool:
+    """Only delete a decoy that is still exactly what X-Ray wrote."""
+    data = p.read_bytes()
+    if f.get("sha256"):
+        return hashlib.sha256(data).hexdigest() == f["sha256"]
+    # registries from 0.1.0 stored only the size; accept a CRLF-translated copy too
+    return len(data) in (f.get("size", -1), f.get("size", -1) + data.count(b"\r\n"))
 
 def load_registry(registry_file: Path) -> dict:
     try:

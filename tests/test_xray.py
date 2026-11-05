@@ -86,6 +86,12 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(analysis._disclosed("api.open-meteo.com", ["open-meteo.com"]))
         self.assertFalse(analysis._disclosed("evil.ru", ["open-meteo.com"]))
 
+    def test_command_names_on_windows_and_posix(self):
+        self.assertEqual(analysis._cmd_name("/usr/bin/curl -s x"), "curl")
+        self.assertEqual(analysis._cmd_name("C:\\Windows\\System32\\curl.exe"), "curl")
+        self.assertEqual(analysis._cmd_name('"C:\\Program Files\\Git\\bin\\git.exe" status'), "git")
+        self.assertEqual(analysis._cmd_name("None"), "?")
+
     def test_diff(self):
         old = {"verdict": "GREEN", "result": {"fingerprint": analysis.fingerprint(
             {"api.a.com"}, set(), set(), set(), False, False)}}
@@ -110,6 +116,7 @@ class LiveBaitTests(unittest.TestCase):
         self.assertTrue(planted)
         removed = bait.remove(reg)
         self.assertEqual(len(removed), len(planted))
+        self.assertFalse(any(Path(f["path"]).exists() for f in planted))
         self.assertEqual(real.read_text(), "REAL")
 
     def test_runtime_tracer_blames_the_plugin(self):

@@ -137,6 +137,20 @@ def set_phase(name):
     _PHASE[0] = name
 
 
+def _cmd_target(event, args):
+    """The program a spawn event runs. subprocess.Popen audits (executable, args, cwd, env) and
+    executable is None unless passed explicitly (always on Windows), so fall back to argv[0]."""
+    exe = args[0] if args else None
+    argv = args[1] if len(args) > 1 else None
+    if event == "subprocess.Popen" and exe is None:
+        exe = argv
+    if isinstance(exe, (list, tuple)):
+        exe = exe[0] if exe else None
+    if isinstance(exe, bytes):
+        exe = exe.decode("utf-8", "replace")
+    return "" if exe is None else str(exe)
+
+
 def _hook(event, args):
     if getattr(_TLS, "busy", False):
         return
@@ -165,6 +179,8 @@ def _hook(event, args):
             target = str(args[0])
         elif event == "import":
             target = str(args[0])
+        elif kind == "subprocess":
+            target = _cmd_target(event, args)
         else:
             target = str(args[0]) if args else ""
     except Exception:
