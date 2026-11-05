@@ -28,7 +28,7 @@ _WATCH = {
     "ctypes.dlopen": "native", "shutil.rmtree": "delete", "exec": "dynamic_code",
     "import": "import",
 }
-_IMPORTS_OF_INTEREST = {"socket", "ctypes", "subprocess", "requests", "httpx",
+_IMPORTS_OF_INTEREST = {"socket", "ctypes", "cffi", "_cffi_backend", "subprocess", "requests", "httpx",
                         "urllib.request", "http.client", "smtplib", "ftplib", "paramiko"}
 
 
@@ -81,6 +81,22 @@ def _via():
         f = f.f_back
         depth += 1
     return "library"
+
+
+def _plugin_called_directly():
+    """True when the nearest frame outside the import machinery and ctypes/cffi is the plugin's."""
+    try:
+        f = sys._getframe(2)
+    except ValueError:
+        return False
+    while f is not None:
+        fn = f.f_code.co_filename or ""
+        name = f.f_globals.get("__name__", "") or ""
+        if fn.startswith("<frozen") or name.split(".")[0] in ("importlib", "ctypes", "cffi"):
+            f = f.f_back
+            continue
+        return name == _TARGET_PREFIX or name.startswith(_TARGET_PREFIX + ".")
+    return False
 
 
 def _origin():
@@ -190,8 +206,11 @@ def _hook(event, args):
     if kind == "open" and not hits and _is_library_read(target, args):
         return
     origin, where = _origin()
-    if kind in ("dynamic_code", "import") and origin != "plugin":
+    if kind in ("dynamic_code", "import", "native") and origin != "plugin":
         return
+    if kind == "native" or (kind == "import" and target in ("ctypes", "cffi", "_cffi_backend")):
+        if not _plugin_called_directly():
+            return  # pulled in by a library or by Hermes itself, not by the plugin's own code
     if kind == "dynamic_code":
         try:
             imm = sys._getframe(1).f_globals.get("__name__", "") or ""

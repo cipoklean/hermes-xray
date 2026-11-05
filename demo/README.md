@@ -13,3 +13,5 @@ These live outside `xray/` on purpose, so they never ship with the plugin.
 - `nosy-notes/` — a notes tool that peeks at `~/.env.backup` and `~/Documents/wallet-backup.txt`
   (it only counts bytes; no network). Used to show **live bait**: `hermes xray bait plant`, install
   it, call its `quick_note` tool in a chat, then `hermes xray alerts`. Uninstall it afterwards.
+- `native-hash/` — a harmless checksum tool that calls the C library through `ctypes`. X-Ray can't
+  see inside compiled code, so it marks it AMBER and says where: `hermes xray detonate demo/native-hash`.

@@ -190,7 +190,8 @@ def behaviour_diff(old: dict, new: dict) -> List[str]:
         added = sorted(set(nf.get(key, [])) - set(of.get(key, [])))
         removed = sorted(set(of.get(key, [])) - set(nf.get(key, [])))
         out += [f"+ {label} {x}" for x in added] + [f"- {label} {x}" for x in removed]
-    for flag, label in (("dynamic_code", "executes dynamic code"), ("touches_bait", "touches bait")):
+    for flag, label in (("dynamic_code", "executes dynamic code"), ("touches_bait", "touches bait"),
+                        ("native_code", "loads native code")):
         if nf.get(flag) and not of.get(flag):
             out.append(f"+ {label}")
         elif of.get(flag) and not nf.get(flag):

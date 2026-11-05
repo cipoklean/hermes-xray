@@ -58,6 +58,33 @@ def stage_copy(plugin_dir: Path, world: dict) -> Path:
     return dest
 
 
+_BINARY_EXT = (".so", ".pyd", ".dll", ".dylib", ".exe", ".node", ".bin")
+_ELF_PE_MACHO = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+
+
+def native_binaries(plugin_dir: Path, limit: int = 20) -> list:
+    """Compiled files shipped in the plugin: their code runs below Python, so it can't be traced."""
+    found = []
+    plugin_dir = Path(plugin_dir)
+    for p in sorted(plugin_dir.rglob("*")):
+        if len(found) >= limit:
+            break
+        if not p.is_file() or ".git" in p.parts or "__pycache__" in p.parts:
+            continue
+        rel = p.relative_to(plugin_dir).as_posix()
+        if p.suffix.lower() in _BINARY_EXT or ".so." in p.name:
+            found.append(rel)
+            continue
+        try:
+            with open(p, "rb") as fh:
+                head = fh.read(4)
+        except OSError:
+            continue
+        if head.startswith(_ELF_PE_MACHO):
+            found.append(rel)
+    return found
+
+
 def detonate(plugin_dir: Path, *, warps=DEFAULT_WARPS, allow_exec: bool = False,
              fuzz_rounds: int = 3, per_call_timeout: float = 4.0, run_timeout: float = 60.0,
              keep: bool = False, python: Optional[str] = None) -> dict:
@@ -95,7 +122,8 @@ def detonate(plugin_dir: Path, *, warps=DEFAULT_WARPS, allow_exec: bool = False,
     finally:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
-    return {"plugin_dir": str(plugin_dir), "staged_dir": str(staged), "world": {
+    return {"plugin_dir": str(plugin_dir), "staged_dir": str(staged),
+            "binaries": native_binaries(plugin_dir), "world": {
         k: world[k] for k in ("home", "hermes_home", "marker", "files")} | {
         "token_kinds": {v: k for k, v in world["tokens"].items()}},
         "needles": bait.needles(world), "runs": runs, "chamber_root": str(root)}

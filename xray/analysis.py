@@ -4,7 +4,7 @@ Verdict:
   RED   — the plugin read bait, or a bait value appeared in an outbound URL/DNS/command/write,
           or it only misbehaved after the clock was warped (a time-bomb).
   AMBER — undisclosed real-world reach: a non-loopback host, a subprocess, a write outside its
-          own data/config area, or dynamic code execution.
+          own data/config area, dynamic code execution, or native code X-Ray cannot trace.
   GREEN — none of the above.
 """
 
@@ -102,6 +102,7 @@ def summarize_run(run: dict, world: dict) -> dict:
     home, hhome = world["home"], world["hermes_home"]
     bait_paths = {_norm(f["path"]): f["kind"] for f in world.get("files", [])}
     hosts, cmds, writes, reads, baited, dyn = set(), set(), set(), set(), [], False
+    native = []
     sanctioned = []
     egress_blocked = set()
     for e in run.get("events", []):
@@ -147,13 +148,17 @@ def summarize_run(run: dict, world: dict) -> dict:
             reads.add(_path_class(target, home, hhome) or "other")
         elif kind == "dynamic_code":
             dyn = True
+        elif kind == "native" or (kind == "import" and target in ("ctypes", "cffi", "_cffi_backend")):
+            if where and where not in native:
+                native.append(where)
     reads.discard("")
     writes.discard("")
     return {"warp_days": run.get("warp_days"), "hosts": sorted(hosts),
             "egress_blocked": sorted(egress_blocked), "commands": sorted(cmds),
             "writes": sorted(writes), "reads": sorted(reads), "bait_hits": baited,
             "sanctioned": sanctioned,
-            "dynamic_code": dyn, "crash": run.get("crash"), "timed_out": run.get("timed_out")}
+            "dynamic_code": dyn, "native": native,
+            "crash": run.get("crash"), "timed_out": run.get("timed_out")}
 
 
 def declared_hosts(texts: List[str]) -> List[str]:
@@ -194,7 +199,9 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
     union_hosts, union_cmds, union_writes, union_reads = set(), set(), set(), set()
     all_bait, warp_only, sanctioned = [], [], []
     dyn = False
+    native = []
     for s in per:
+        native += [n for n in s.get("native", []) if n not in native]
         union_hosts |= set(s["hosts"]) | set(s["egress_blocked"])
         union_cmds |= set(s["commands"])
         union_writes |= set(s["writes"])
@@ -253,27 +260,39 @@ def analyze(detonation: dict, declared_texts: List[str] = ()) -> dict:
         amber.append("writes outside its data dir: " + ", ".join(sorted(union_writes & {"hermes-home","home","system","other"})))
     if dyn:
         amber.append("executes dynamically built code")
+    binaries = list(detonation.get("binaries") or [])
+    if binaries:
+        amber.append("ships compiled code that X-Ray cannot trace (catalog rule 14, no unscannable "
+                     "binaries): " + ", ".join(binaries[:5]) + (" …" if len(binaries) > 5 else ""))
+    if native:
+        amber.append("calls native code (ctypes/cffi), which runs below Python where X-Ray cannot "
+                     "trace it: at " + ", ".join(native[:3]))
     if verdict == "GREEN" and amber:
         verdict = "AMBER"
 
-    fp = fingerprint(union_hosts, union_cmds, union_writes, union_reads, dyn, bool(all_bait))
+    fp = fingerprint(union_hosts, union_cmds, union_writes, union_reads, dyn, bool(all_bait),
+                     native=bool(native or binaries))
     return {"verdict": verdict, "reasons": reasons, "amber": amber, "per_warp": per,
             "hosts": sorted(union_hosts), "commands": sorted(union_cmds),
             "writes": sorted(union_writes), "reads": sorted(union_reads),
             "dynamic_code": dyn, "bait_hits": all_bait, "warp_only": warp_only,
             "undisclosed_hosts": undisclosed, "sanctioned": sanctioned, "fingerprint": fp,
+            "native": native, "binaries": binaries,
             "disclosure": disclosure(sorted(union_hosts), sorted(union_cmds), sorted(union_writes),
-                                     dyn, "credential-store" in union_reads)}
+                                     dyn, "credential-store" in union_reads,
+                                     native=bool(native or binaries))}
 
 
-def fingerprint(hosts, cmds, writes, reads, dyn, bait) -> dict:
+def fingerprint(hosts, cmds, writes, reads, dyn, bait, native=False) -> dict:
     body = {"hosts": sorted(hosts), "commands": sorted(cmds), "writes": sorted(writes),
             "reads": sorted(reads), "dynamic_code": bool(dyn), "touches_bait": bool(bait)}
+    if native:  # only present when true, so fingerprints of pure-Python plugins stay stable
+        body["native_code"] = True
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
     return {"hash": digest, **body}
 
 
-def disclosure(hosts, cmds, writes, dyn, reads_creds=False) -> str:
+def disclosure(hosts, cmds, writes, dyn, reads_creds=False, native=False) -> str:
     parts = []
     if reads_creds:
         parts.append("READS CREDENTIAL FILES (keys, tokens, wallet)")
@@ -290,4 +309,6 @@ def disclosure(hosts, cmds, writes, dyn, reads_creds=False) -> str:
         parts.append("writes only inside its own data dir")
     if dyn:
         parts.append("executes dynamically generated code")
+    if native:
+        parts.append("loads native (compiled) code")
     return "Disclosure — " + "; ".join(parts) + "."

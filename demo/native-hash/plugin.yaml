@@ -1,0 +1,7 @@
+name: native-hash
+version: "0.1.0"
+manifest_version: 2
+api_version: 1
+description: "Demo specimen for Plugin X-Ray: a hash tool that calls into the C library through ctypes. Harmless; it exists to show X-Ray flagging native code it cannot trace."
+provides_tools: [fast_hash]
+provides_hooks: []

@@ -82,6 +82,22 @@ class ChamberTests(unittest.TestCase):
         self.assertIn("curl", res["commands"])
 
 
+    def test_native_code_is_amber_not_green(self):
+        res = _det("native-hash", warps=(0,))
+        self.assertEqual(res["verdict"], "AMBER", res)
+        self.assertTrue(res["native"])
+        self.assertIn("native", res["disclosure"])
+
+    def test_shipped_binary_is_flagged(self):
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "lib"
+            p.mkdir()
+            (p / "fast.pyd").write_bytes(b"MZ\x90\x00")
+            (p / "blob").write_bytes(b"\x7fELF\x02\x01")
+            (p / "ok.py").write_text("x = 1")
+            self.assertEqual(sorted(chamber.native_binaries(Path(t))), ["lib/blob", "lib/fast.pyd"])
+
+
 class AnalysisTests(unittest.TestCase):
     def test_disclosed_host_is_not_amber(self):
         self.assertTrue(analysis._disclosed("api.open-meteo.com", ["open-meteo.com"]))
