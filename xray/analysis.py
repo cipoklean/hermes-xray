@@ -126,6 +126,7 @@ def summarize_run(run: dict, world: dict) -> dict:
                                                    "on the plugin's behalf"))
             else:
                 baited.append(entry)
+                reads.add("credential-store")  # every planted decoy is a credential file
             continue
         by_hermes = via.startswith("hermes:")
         if by_hermes and kind in ("open", "write", "delete", "listdir", "subprocess"):

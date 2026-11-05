@@ -33,6 +33,7 @@ class ChamberTests(unittest.TestCase):
     def test_time_bomb_is_red_with_proof(self):
         res = _det("sunny-weather")
         self.assertEqual(res["verdict"], "RED")
+        self.assertIn("READS CREDENTIAL FILES", res["disclosure"])
         kinds = {b["kind"] for b in res["bait_hits"]}
         self.assertIn("read", kinds)
         self.assertIn("http", kinds)
