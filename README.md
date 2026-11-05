@@ -13,9 +13,10 @@ Plugin X-Ray does three things a static scanner, a prompt, or a skill can't:
    from its own schema, every hook fired, real network egress **blocked**, and the same run replayed
    with the clock **warped +30 and +90 days** to trip time-bombs.
 2. **Live bait** — `hermes xray bait plant` (opt-in) drops decoy credential files into *empty*
-   well-known paths. A legitimate plugin never touches them. If an installed plugin reads one, or a
-   honeytoken shows up in an outbound URL, X-Ray names the plugin, the file and the line. **Proof,
-   not guesswork: no false positives.**
+   well-known paths. Nothing you own uses them, so an honest plugin has no reason to open one. If an
+   installed plugin reads one, or a honeytoken shows up in an outbound URL, X-Ray names the plugin,
+   the file and the line, and (with `enforce` on) Hermes asks your approval before that plugin's
+   next tool call. **Every alert comes with the line of code that did it, so you can check it.**
 3. **Behaviour fingerprints** — every detonation is stored per plugin@sha. `hermes xray diff` shows
    what changed in *behaviour* between versions ("+ host x.ru"), and `hermes xray disclose` drafts
    the honest catalog disclosure line from what the plugin actually did.
@@ -55,9 +56,17 @@ through, found in about a minute each with zero LLM calls.
 ## Install
 
 ```bash
-hermes plugins install cipoklean/hermes-xray   # catalog name: xray
-hermes plugins enable xray
+hermes plugins install cipoklean/hermes-xray/xray   # once listed: hermes plugins install xray
+hermes plugins enable xray --no-allow-tool-override  # X-Ray overrides no tools
 ```
+
+The plugin lives in the `xray/` subdirectory. The repo root also holds `demo/`, deliberately
+malicious specimens for trying X-Ray, so Hermes' install scanner rightly blocks installing the
+repo root itself.
+
+Plugins are kept in `$HERMES_HOME/plugins` (`~/.hermes` on macOS/Linux,
+`%LOCALAPPDATA%\hermes` on Windows). Turn on enforcement with
+`hermes config set plugins.entries.xray.settings.enforce true`.
 
 ## Commands
 
