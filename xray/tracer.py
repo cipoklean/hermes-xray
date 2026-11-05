@@ -16,6 +16,15 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 _TLS = threading.local()
+_SELF = "xray"
+
+
+def _n(path: str) -> str:
+    """Comparable spelling of a path on every OS (case, slashes, symlinks/junctions)."""
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError, TypeError):
+        return os.path.normcase(str(path))
 
 
 def _plugin_roots() -> Dict[str, str]:
@@ -27,12 +36,12 @@ def _plugin_roots() -> Dict[str, str]:
         if base.is_dir():
             for d in base.iterdir():
                 if d.is_dir():
-                    roots[str(d.resolve())] = d.name
+                    roots[_n(str(d))] = d.name
     except Exception:
         pass
     for item in os.environ.get("XRAY_EXTRA_PLUGIN_ROOTS", "").split(os.pathsep):
         if item and Path(item).is_dir():
-            roots[str(Path(item).resolve())] = Path(item).name
+            roots[_n(item)] = Path(item).name
     return roots
 
 
@@ -41,7 +50,7 @@ class RuntimeTracer:
                  on_alert: Callable[[dict], None]):
         self._needles = [n for n in needles if n]
         self._needles_lc = [n.lower() for n in self._needles]
-        self._decoys = {str(Path(p).resolve()): kind for p, kind in decoy_paths.items()}
+        self._decoys = {_n(p): kind for p, kind in decoy_paths.items()}
         self._decoy_names = {os.path.basename(p) for p in self._decoys}
         self._on_alert = on_alert
         self._roots = _plugin_roots()
@@ -71,17 +80,46 @@ class RuntimeTracer:
             fn = f.f_code.co_filename
             plugin = self._cache.get(fn, False)
             if plugin is False:
-                plugin = None
-                for root, name in self._root_items:
-                    if fn.startswith(root + os.sep):
-                        plugin = name
-                        break
+                plugin = self._owner_of(fn)
                 self._cache[fn] = plugin
             if plugin:
                 return f"{plugin}\x00{fn}:{f.f_lineno}"
             f = f.f_back
             depth += 1
         return None
+
+    def _owner_of(self, fn: str) -> Optional[str]:
+        if not fn or fn.startswith("<"):
+            return None
+        nf = _n(fn)
+        for root, name in self._root_items:
+            if nf.startswith(root + os.sep):
+                return name
+        # the file may be loaded from a copy (plugin host staging): match ".../plugins/<name>/..."
+        parts = nf.replace("\\", "/").split("/")
+        for i, part in enumerate(parts[:-1]):
+            if part == "plugins" and i + 1 < len(parts) - 1:
+                cand = parts[i + 1]
+                for name in self._roots.values():
+                    if os.path.normcase(name) == cand and name != _SELF:
+                        return name
+        return None
+
+    def _nearest_code(self) -> str:
+        """For an unattributed read: the first frame outside the stdlib and X-Ray itself."""
+        try:
+            f = sys._getframe(3)
+        except ValueError:
+            return ""
+        stdlib = _n(os.path.dirname(os.__file__))
+        me = _n(os.path.dirname(__file__))
+        while f is not None:
+            fn = f.f_code.co_filename
+            nf = _n(fn) if not fn.startswith("<") else fn
+            if not fn.startswith("<") and not nf.startswith(stdlib) and not nf.startswith(me):
+                return f"{fn}:{f.f_lineno}"
+            f = f.f_back
+        return ""
 
     def _match_needle(self, args) -> List[str]:
         if not self._needles_lc:
@@ -107,10 +145,7 @@ class RuntimeTracer:
                 target = str(args[0])
                 if os.path.basename(target) not in self._decoy_names:
                     return
-                try:
-                    decoy_kind = self._decoys.get(str(Path(target).resolve()))
-                except Exception:
-                    decoy_kind = None
+                decoy_kind = self._decoys.get(_n(target))
             needle_hits = self._match_needle(args) if (is_net or not is_open) else []
             if is_open and not decoy_kind:
                 needle_hits = []  # opening a non-decoy file is not interesting on its own
@@ -118,9 +153,14 @@ class RuntimeTracer:
                 return
             _TLS.busy = True
             blame = self._blame()
-            if not blame:
+            if blame:
+                plugin, where = blame.split("\x00", 1)
+            elif decoy_kind:
+                # touched, but not from an installed plugin's code (core, a skill, a shell tool):
+                # still worth showing, at a lower severity, so a miss is never silent
+                plugin, where = "(unattributed)", self._nearest_code()
+            else:
                 return
-            plugin, where = blame.split("\x00", 1)
             key = (plugin, event, decoy_kind or tuple(needle_hits), where)
             if key in self._fired:
                 return
@@ -131,7 +171,8 @@ class RuntimeTracer:
             else:
                 detail = f"honeytoken value appeared in a {event} ({len(needle_hits)} token)"
                 kind = "honeytoken-egress"
-            self._on_alert({"plugin": plugin, "severity": "RED", "kind": kind,
+            self._on_alert({"plugin": plugin,
+                            "severity": "RED" if blame else "INFO", "kind": kind,
                             "detail": detail, "location": where, "event": event,
                             "target": target[:200]})
         except Exception:

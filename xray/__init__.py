@@ -13,6 +13,7 @@ throwaway child process (see chamber/). Stdlib only; no LLM calls.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from . import bait, store
@@ -45,6 +46,13 @@ def _arm_runtime_tracer(ctx=None):
     t = RuntimeTracer(needles, decoys, _on_alert)
     t.install()
     _TRACER = t
+    try:  # heartbeat, so `hermes xray bait status` can say where and when the tracer is armed
+        import json, time as _t
+        (store.data_dir() / "tracer.json").write_text(json.dumps({
+            "ts": _t.time(), "pid": os.getpid(), "python": sys.executable,
+            "decoys": len(decoys), "plugins": sorted(set(t._roots.values()))}), encoding="utf-8")
+    except Exception:
+        pass
     return t
 
 
@@ -86,6 +94,8 @@ def _pre_tool_call(tool_name=None, args=None, task_id=None, **kwargs):
     Ownership comes from the public tool registry: the handler's module lives under
     ``hermes_plugins.<slug>`` for a directory plugin. Core tools are never escalated.
     """
+    if _TRACER is None and _setting("bait_runtime", True):
+        _arm_runtime_tracer()  # in case this front end never fires on_session_start
     enforce = _setting("enforce", False) or os.environ.get("XRAY_ENFORCE") == "1"
     if not enforce or not tool_name:
         return None

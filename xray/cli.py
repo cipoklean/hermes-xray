@@ -243,6 +243,15 @@ def cmd_bait(a) -> int:
         print(f"{len(files)} decoy file(s) planted." if files else "No bait planted.")
         for f in files:
             print(f"   {f['kind']:16} {f['path']}  {'present' if Path(f['path']).exists() else 'MISSING'}")
+        hb = Path(store.data_dir()) / "tracer.json"
+        try:
+            h = json.loads(hb.read_text(encoding="utf-8"))
+            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h["ts"]))
+            print(f"Runtime tracer last armed {when} (pid {h['pid']}), watching "
+                  f"{h['decoys']} decoy(s) and plugins: {', '.join(h['plugins']) or '(none)'}")
+        except (OSError, ValueError, KeyError):
+            if files:
+                print("Runtime tracer not armed yet: start a new `hermes` chat (it arms on session start).")
     return 0
 
 
