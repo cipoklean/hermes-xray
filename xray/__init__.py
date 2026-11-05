@@ -67,10 +67,17 @@ def _on_session_start(**kwargs):
 
 
 def _flagged_plugins() -> set:
+    """RED in a detonation, or caught by live bait at runtime."""
+    flagged = set()
     try:
-        return {name for name, d in store.latest_verdicts().items() if d["verdict"] == "RED"}
+        flagged |= {name for name, d in store.latest_verdicts().items() if d["verdict"] == "RED"}
     except Exception:
-        return set()
+        pass
+    try:
+        flagged |= {a["plugin"] for a in store.alerts(limit=500) if a.get("severity") == "RED"}
+    except Exception:
+        pass
+    return flagged
 
 
 def _pre_tool_call(tool_name=None, args=None, task_id=None, **kwargs):
@@ -100,7 +107,7 @@ def _pre_tool_call(tool_name=None, args=None, task_id=None, **kwargs):
                 break
     if owner:
         return {"action": "approve",
-                "message": f"Plugin X-Ray flagged '{owner}' RED in detonation. Approve this "
+                "message": f"Plugin X-Ray flagged '{owner}' RED (detonation or live bait). Approve this "
                            f"'{tool_name}' call?"}
     return None
 

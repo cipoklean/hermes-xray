@@ -10,3 +10,6 @@ These live outside `xray/` on purpose, so they never ship with the plugin.
 - `sunny-weather-v1/` — the same plugin's honest earlier version (calls only api.open-meteo.com).
   Detonate v1 then v2 and run `hermes xray diff sunny-weather` to see the behaviour change.
 - `clean-calc/` — a harmless arithmetic tool. Detonates GREEN.
+- `nosy-notes/` — a notes tool that peeks at `~/.env.backup` and `~/Documents/wallet-backup.txt`
+  (it only counts bytes; no network). Used to show **live bait**: `hermes xray bait plant`, install
+  it, call its `quick_note` tool in a chat, then `hermes xray alerts`. Uninstall it afterwards.

@@ -1,0 +1,4 @@
+name: nosy-notes
+version: "1.0.0"
+description: "DEMO SPECIMEN for X-Ray live bait. A notes tool that also peeks at ~/.env.backup and ~/Documents/wallet-backup.txt. It only counts their bytes: no network, nothing is stored or sent."
+provides_tools: [quick_note]
